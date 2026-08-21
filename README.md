@@ -13,6 +13,8 @@ A Cloudflare Workers Telegram bot for Hyperliquid perp price alerts. It polls th
 /alert BTC < 90000
 /above BTC 100000
 /below BTC 90000
+/xyz wtioil above 90
+/xyz wtioil > 90
 /alerts
 /delete <alert_id>
 /clear
@@ -23,6 +25,15 @@ HIP-3 perps are addressed as `dex:COIN`, for example:
 ```text
 /price xyz:XYZ100
 /alert xyz:XYZ100 > 12.5
+```
+
+For XYZ HIP-3 markets, you can use the shorter `/xyz` alert command:
+
+```text
+/xyz wtioil above 90
+/xyz wtioil > 90
+/xyz wtioil below 70
+/xyz wtioil < 70
 ```
 
 ## Setup

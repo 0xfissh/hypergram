@@ -255,6 +255,10 @@ class AlertEngine extends DurableObject<Env> {
       return this.createAlertFromParts(chatId, args[0], command === "/above" ? "above" : "below", args[1]);
     }
 
+    if (command === "/xyz") {
+      return this.createXyzAlertCommand(chatId, args);
+    }
+
     if (command === "/alert") {
       return this.createAlertFromAlertCommand(chatId, args);
     }
@@ -276,6 +280,28 @@ class AlertEngine extends DurableObject<Env> {
     return this.createAlertFromParts(chatId, symbol, direction, value);
   }
 
+  private async createXyzAlertCommand(chatId: string, args: string[]): Promise<string> {
+    if (args.length < 3) {
+      return "Use /xyz wtioil above 90 or /xyz wtioil &gt; 90.";
+    }
+
+    const [assetInput, directionInput, thresholdInput] = args;
+    const direction = parseDirection(directionInput);
+    if (!direction) {
+      return "Use above, below, &gt;, or &lt; after the XYZ asset.";
+    }
+
+    const threshold = parsePrice(thresholdInput);
+    if (threshold == null) {
+      return "That threshold is not a valid positive number.";
+    }
+
+    const marketResult = await this.resolveDexMarket("xyz", assetInput, true);
+    if (!marketResult.ok) return marketResult.message;
+
+    return this.createAlert(chatId, marketResult.market, direction, threshold);
+  }
+
   private async createAlertFromParts(
     chatId: string,
     symbolInput: string | undefined,
@@ -294,15 +320,24 @@ class AlertEngine extends DurableObject<Env> {
     const marketResult = await this.resolveMarket(symbolInput, true);
     if (!marketResult.ok) return marketResult.message;
 
+    return this.createAlert(chatId, marketResult.market, direction, threshold);
+  }
+
+  private async createAlert(
+    chatId: string,
+    market: Market,
+    direction: Direction,
+    threshold: number
+  ): Promise<string> {
     const alert: Alert = {
       id: crypto.randomUUID().slice(0, 8),
       chatId,
-      symbol: marketResult.market.symbol,
+      symbol: market.symbol,
       direction,
       threshold,
       createdAt: Date.now(),
       active: true,
-      lastPrice: marketResult.market.markPx
+      lastPrice: market.markPx
     };
 
     await this.ctx.storage.put(alertKey(alert.id), alert);
@@ -311,7 +346,7 @@ class AlertEngine extends DurableObject<Env> {
     return [
       `Alert ${escapeHtml(alert.id)} created.`,
       `${escapeHtml(alert.symbol)} ${formatDirectionOperator(direction)} ${formatPrice(threshold)}`,
-      `Current mark: ${formatPrice(marketResult.market.markPx)}`
+      `Current mark: ${formatPrice(market.markPx)}`
     ].join("\n");
   }
 
@@ -475,6 +510,37 @@ class AlertEngine extends DurableObject<Env> {
     return { ok: false, message: `I could not find ${escapeHtml(input)}. Try /markets ${escapeHtml(input)}.` };
   }
 
+  private async resolveDexMarket(
+    dex: string,
+    input: string,
+    forceFresh: boolean
+  ): Promise<{ ok: true; market: Market } | { ok: false; message: string }> {
+    const markets = await this.fetchDexMarkets(dex, forceFresh);
+    const normalizedInput = input.trim().toUpperCase();
+    const normalizedSymbol = normalizedInput.includes(":") ? normalizedInput : `${dex.toUpperCase()}:${normalizedInput}`;
+    const exact = markets.find((market) => market.symbol.toUpperCase() === normalizedSymbol);
+
+    if (exact) {
+      return { ok: true, market: exact };
+    }
+
+    const coin = normalizedSymbol.split(":").at(-1) ?? normalizedSymbol;
+    const coinMatch = markets.find((market) => market.coin.toUpperCase() === coin);
+    if (coinMatch) {
+      return { ok: true, market: coinMatch };
+    }
+
+    const matches = markets
+      .filter((market) => market.symbol.toUpperCase().includes(coin) || market.coin.toUpperCase().includes(coin))
+      .slice(0, 10);
+    const suggestion = matches.length > 0 ? `\nClosest XYZ matches:\n${matches.map((market) => escapeHtml(market.symbol)).join("\n")}` : "";
+
+    return {
+      ok: false,
+      message: `I could not find xyz:${escapeHtml(coin)}.${suggestion}`
+    };
+  }
+
   private async fetchMarkets(forceFresh: boolean): Promise<Market[]> {
     if (!forceFresh) {
       const cached = await this.ctx.storage.get<{ fetchedAt: number; markets: Market[] }>(MARKET_CACHE_KEY);
@@ -485,6 +551,21 @@ class AlertEngine extends DurableObject<Env> {
 
     const markets = await fetchHyperliquidMarkets(this.env);
     await this.ctx.storage.put(MARKET_CACHE_KEY, { fetchedAt: Date.now(), markets });
+    return markets;
+  }
+
+  private async fetchDexMarkets(dex: string, forceFresh: boolean): Promise<Market[]> {
+    const cacheKey = `market-cache:${dex}`;
+
+    if (!forceFresh) {
+      const cached = await this.ctx.storage.get<{ fetchedAt: number; markets: Market[] }>(cacheKey);
+      if (cached && Date.now() - cached.fetchedAt < MARKET_CACHE_MS) {
+        return cached.markets;
+      }
+    }
+
+    const markets = await fetchHyperliquidDexMarkets(this.env, dex);
+    await this.ctx.storage.put(cacheKey, { fetchedAt: Date.now(), markets });
     return markets;
   }
 
@@ -509,9 +590,7 @@ async function fetchHyperliquidMarkets(env: Env): Promise<Market[]> {
   const dexes = await fetchPerpDexes(env);
   const responses = await Promise.allSettled(
     dexes.map(async (dex) => {
-      const payload = dex ? { type: "metaAndAssetCtxs", dex } : { type: "metaAndAssetCtxs" };
-      const result = await hyperliquidInfo(env, payload);
-      return parseMetaAndAssetContexts(dex, result);
+      return fetchHyperliquidDexMarkets(env, dex);
     })
   );
 
@@ -529,6 +608,12 @@ async function fetchHyperliquidMarkets(env: Env): Promise<Market[]> {
   }
 
   return markets;
+}
+
+async function fetchHyperliquidDexMarkets(env: Env, dex: string): Promise<Market[]> {
+  const payload = dex ? { type: "metaAndAssetCtxs", dex } : { type: "metaAndAssetCtxs" };
+  const result = await hyperliquidInfo(env, payload);
+  return parseMetaAndAssetContexts(dex, result);
 }
 
 async function fetchPerpDexes(env: Env): Promise<string[]> {
@@ -727,6 +812,8 @@ function helpMessage(): string {
     "/alert BTC &lt; 90000",
     "/above BTC 100000",
     "/below BTC 90000",
+    "/xyz wtioil above 90",
+    "/xyz wtioil &gt; 90",
     "",
     "HIP-3 symbols use dex:COIN, for example /price xyz:XYZ100.",
     "",
