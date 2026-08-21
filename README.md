@@ -38,40 +38,110 @@ For XYZ HIP-3 markets, you can use the shorter `/xyz` alert command:
 
 ## Setup
 
-Install dependencies:
+Follow these steps to run your own Hypergram bot.
+
+### 1. Create a Telegram bot
+
+1. Open Telegram and message `@BotFather`.
+2. Send `/newbot`.
+3. Pick a bot name and username.
+4. Copy the token BotFather gives you. This is your `TELEGRAM_BOT_TOKEN`.
+
+### 2. Install dependencies
+
+Run this inside the project folder:
 
 ```sh
 npm install
 ```
 
-Create Cloudflare secrets:
+### 3. Log in to Cloudflare
+
+```sh
+npx wrangler login
+```
+
+If this is your first Worker, open Cloudflare Dashboard > Workers & Pages once to create your `workers.dev` subdomain.
+
+### 4. Set Worker secrets
+
+Set the Telegram bot token:
 
 ```sh
 npx wrangler secret put TELEGRAM_BOT_TOKEN
+```
+
+Generate a random webhook secret:
+
+```sh
+openssl rand -hex 32
+```
+
+Set it:
+
+```sh
 npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+```
+
+Generate a random admin secret:
+
+```sh
+openssl rand -hex 32
+```
+
+Set it and save the value locally:
+
+```sh
 npx wrangler secret put ADMIN_SECRET
 ```
 
-Deploy:
+### 5. Deploy the Worker
 
 ```sh
 npm run deploy
 ```
 
-Register the Telegram webhook after deploy. Replace the URL with your Worker URL:
+Copy the Worker URL from the deploy output. It will look like:
 
-```sh
-curl -X POST "https://<worker-host>/admin/set-webhook" \
-  -H "Authorization: Bearer <ADMIN_SECRET>" \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://<worker-host>/webhook"}'
+```text
+https://hypergram.<your-subdomain>.workers.dev
 ```
 
-Kick the alert engine if needed:
+### 6. Register the Telegram webhook
+
+Replace `<worker-url>` with your Worker URL and `<admin-secret>` with your `ADMIN_SECRET`.
 
 ```sh
-curl -X POST "https://<worker-host>/admin/start" \
-  -H "Authorization: Bearer <ADMIN_SECRET>"
+curl -X POST "<worker-url>/admin/set-webhook" \
+  -H "Authorization: Bearer <admin-secret>" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"<worker-url>/webhook"}'
+```
+
+You should see `"ok": true`.
+
+### 7. Start the alert engine
+
+```sh
+curl -X POST "<worker-url>/admin/start" \
+  -H "Authorization: Bearer <admin-secret>"
+```
+
+### 8. Test the bot
+
+Open your bot in Telegram and send:
+
+```text
+/start
+/price BTC
+/alert BTC > 100000
+/alerts
+```
+
+For XYZ HIP-3 assets:
+
+```text
+/xyz wtioil > 90
 ```
 
 ## Configuration
