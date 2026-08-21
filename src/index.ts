@@ -66,6 +66,14 @@ const MARKET_CACHE_MS = 30_000;
 const DEFAULT_INTERVAL_SECONDS = 10;
 const MIN_INTERVAL_SECONDS = 5;
 const MAX_TELEGRAM_MESSAGE = 3900;
+const XYZ_ASSET_ALIASES: Record<string, string> = {
+  BRENT: "BRENTOIL",
+  CRUDE: "CL",
+  CRUDEOIL: "CL",
+  USOIL: "CL",
+  WTI: "CL",
+  WTIOIL: "CL"
+};
 
 export { AlertEngine };
 
@@ -516,7 +524,7 @@ class AlertEngine extends DurableObject<Env> {
     forceFresh: boolean
   ): Promise<{ ok: true; market: Market } | { ok: false; message: string }> {
     const markets = await this.fetchDexMarkets(dex, forceFresh);
-    const normalizedInput = input.trim().toUpperCase();
+    const normalizedInput = normalizeDexAssetInput(dex, input);
     const normalizedSymbol = normalizedInput.includes(":") ? normalizedInput : `${dex.toUpperCase()}:${normalizedInput}`;
     const exact = markets.find((market) => market.symbol.toUpperCase() === normalizedSymbol);
 
@@ -741,6 +749,17 @@ function cleanBotCommand(text: string): string {
   return text.replace(/^\/([a-z]+)@[A-Za-z0-9_]+/i, "/$1");
 }
 
+function normalizeDexAssetInput(dex: string, input: string): string {
+  const normalized = input.trim().toUpperCase();
+
+  if (dex.toLowerCase() !== "xyz") {
+    return normalized;
+  }
+
+  const asset = normalized.includes(":") ? normalized.split(":").at(-1) ?? normalized : normalized;
+  return XYZ_ASSET_ALIASES[asset] ?? normalized;
+}
+
 function parseDirection(operator: string): Direction | undefined {
   const normalized = operator.toLowerCase();
   if (normalized === ">" || normalized === ">=" || normalized === "above") return "above";
@@ -814,6 +833,8 @@ function helpMessage(): string {
     "/below BTC 90000",
     "/xyz wtioil above 90",
     "/xyz wtioil &gt; 90",
+    "",
+    "XYZ aliases: wtioil, wti, and usoil resolve to xyz:CL.",
     "",
     "HIP-3 symbols use dex:COIN, for example /price xyz:XYZ100.",
     "",
